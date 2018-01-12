@@ -139,8 +139,71 @@ etcd:
 ### TODO 
 ```shell
 E0107 22:44:00.008526   26873 queue_balancer.go:246] executor_check_rebalance: err=Exception (530) Reason: "NOT_ALLOWED - attempt to reuse consumer tag 'queue.1.consumer'"
-     
-     
+E0112 15:11:59.304502   22352 queue_balance.go:583] Exception (504) Reason: "channel/connection is not open"     
+
+E0112 15:28:13.480721   27016 queue_balance.go:265] executor_subscribe: queue= err=no queue rest     
+
+
+
+
+/qb/consumer_subscribed/consumer.1515743326
+queue.7,queue.1,queue.8,queue.2
+/qb/consumer_subscribed/consumer.1515743332
+queue.3,queue.4,queue.5,queue.2
+/qb/dispatcher
+consumer.1515743326
+/qb/lock/dispatcher/414660e8e8511ac0
+
+/qb/lock/dispatcher/414660e8e8511ae0
+
+/qb/queue/queue.1
+{"Name":"queue.1","Messages":0,"Consumers":1}
+/qb/queue/queue.2
+{"Name":"queue.2","Messages":0,"Consumers":2}
+/qb/queue/queue.3
+{"Name":"queue.3","Messages":0,"Consumers":1}
+/qb/queue/queue.4
+{"Name":"queue.4","Messages":0,"Consumers":1}
+/qb/queue/queue.5
+{"Name":"queue.5","Messages":0,"Consumers":1}
+/qb/queue/queue.6
+{"Name":"queue.6","Messages":0,"Consumers":0}
+/qb/queue/queue.7
+{"Name":"queue.7","Messages":0,"Consumers":1}
+/qb/queue/queue.8
+{"Name":"queue.8","Messages":0,"Consumers":1}
+
+
+
+108 E0112 16:19:32.531605   38280 queue_balance.go:233] executor_check_rebalance: err=Exception (530) Reason: "NOT_ALLOWED - attempt to reuse consumer tag 'queue.6.consumer'"
+122 E0112 16:19:32.585822   38280 queue_balance.go:233] executor_check_rebalance: err=Exception (504) Reason: "channel/connection is not open"
+
+
+失败时候没有解除保护
+
+     82 I0112 16:58:52.027453   47171 queue_balance.go:263] executor_subscribe:
+     83 I0112 16:58:52.027466   47171 queue_balance.go:536] queue_request:
+     84 I0112 16:58:52.027486   47171 queue_balance.go:241] queue_load:
+     85 I0112 16:58:52.027499   47171 queue_balance.go:397] get_kvs: prefix=/qb/queue/
+     86 I0112 16:58:52.028396   47171 queue_balance.go:544] queue_request: qs={"Name":"queue.1","Messages":0,"Consumers":1}
+     87 I0112 16:58:52.028406   47171 queue_balance.go:544] queue_request: qs={"Name":"queue.2","Messages":0,"Consumers":0}
+     88 I0112 16:58:52.076673   47171 queue_balance.go:506] queue_protected_put_nx: key=/qb/queue_protected/queue.2 value=consumer.1515747531
+     89 I0112 16:58:52.120850   47171 queue_mgr.go:48] Subscribe: queue=queue.2
+     90 I0112 16:58:52.127071   47171 queue_balance.go:563] queue_status_changed_put: key=/qb/queue_status_changed/queue.2 value=consumer.1515747531.subscribed
+     91 I0112 16:58:52.146598   47171 queue_balance.go:263] executor_subscribe:
+     92 I0112 16:58:52.146619   47171 queue_balance.go:536] queue_request:
+     93 I0112 16:58:52.146634   47171 queue_balance.go:241] queue_load:
+     94 I0112 16:58:52.146648   47171 queue_balance.go:397] get_kvs: prefix=/qb/queue/
+     95 I0112 16:58:52.147952   47171 queue_balance.go:544] queue_request: qs={"Name":"queue.1","Messages":0,"Consumers":1}
+     96 I0112 16:58:52.147979   47171 queue_balance.go:544] queue_request: qs={"Name":"queue.2","Messages":0,"Consumers":0}
+     97 I0112 16:58:52.187470   47171 queue_balance.go:506] queue_protected_put_nx: key=/qb/queue_protected/queue.2 value=consumer.1515747531
+     98 I0112 16:58:52.235057   47171 queue_mgr.go:48] Subscribe: queue=queue.2
+     99 E0112 16:58:52.241555   47171 queue_balance.go:273] executor_subscribe: queue=queue.2 err=Exception (530) Reason: "NOT_ALLOWED - attempt to reuse consumer tag 'queue.2.consumer'"
+    100 E0112 16:58:52.241625   47171 queue_balance.go:233] executor_check_rebalance: err=Exception (530) Reason: "NOT_ALLOWED - attempt to reuse consumer tag 'queue.2.consumer'"
+
+
+mq的相关操作失败后会断开连接
+
 ```
 
 ### 测试

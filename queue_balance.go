@@ -1,20 +1,19 @@
 package qb
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/coreos/etcd/clientv3"
+	"github.com/coreos/etcd/clientv3/concurrency"
+	"github.com/coreos/etcd/mvcc/mvccpb"
+	log "github.com/golang/glog"
 	"github.com/streadway/amqp"
 	"math"
 	"strconv"
 	"strings"
 	//"sync"
-	//	"gopkg.in/ini.v1"
-	"context"
-	"github.com/coreos/etcd/clientv3"
-	"github.com/coreos/etcd/clientv3/concurrency"
-	"github.com/coreos/etcd/mvcc/mvccpb"
-	log "github.com/golang/glog"
 	"time"
 )
 
@@ -22,6 +21,9 @@ type QueueBalance struct {
 	cli           *clientv3.Client
 	ses           *concurrency.Session
 	mtxDispatcher *concurrency.Mutex
+	mtxProtected  *concurrency.Mutex
+	//mtxProtectedLocal *sync.Mutex
+	//mtxQueueProtect map[string]*concurrency.Mutex
 
 	last_trigger_dispatch time.Time
 
@@ -29,6 +31,7 @@ type QueueBalance struct {
 	prefix_consumer_require_queue_count string
 	prefix_consumer_subscribed          string
 
+	//prefix_lock_queue_protected string
 	prefix_queue_protected      string
 	prefix_queue_status_changed string
 	key_dispatcher              string
@@ -61,7 +64,9 @@ func NewQueueBalance(endpoints []string, amqp string, pOnMsg QueueOnMsg, queue_i
 		return nil, err
 	}
 
-	pthis.mtxDispatcher = concurrency.NewMutex(pthis.ses, "/qb/lock/dispatcher") // TODO: hard code
+	pthis.mtxDispatcher = concurrency.NewMutex(pthis.ses, "/qb/lock/dispatcher")
+	pthis.mtxProtected = concurrency.NewMutex(pthis.ses, "/qb/lock/protected")
+	//pthis.mtxProtectedLocal = &sync.Mutex{}
 
 	pthis.prefix_consumer_subscribed = "/qb/consumer_subscribed/"
 	pthis.prefix_consumer_require_queue_count = "/qb/consumer_require_queue_count/"
@@ -70,9 +75,20 @@ func NewQueueBalance(endpoints []string, amqp string, pOnMsg QueueOnMsg, queue_i
 	pthis.prefix_queue = "/qb/queue/"
 	pthis.key_dispatcher = "/qb/dispatcher"
 
+	//pthis.prefix_lock_queue_protected = "/qb/lock/queue_protected/"
+
 	pthis.queue_ids = queue_ids
 	pthis.local_consumer_id = fmt.Sprintf("consumer.%d", time.Now().Unix())
 	pthis.leaseID = pthis.ses.Lease()
+
+	/*
+		pthis.mtxQueueProtect = map[string]*concurrency.Mutex{}
+		for _, queue := range pthis.queue_ids {
+			key := pthis.prefix_lock_queue_protected + queue
+			m := concurrency.NewMutex(pthis.ses, key)
+			pthis.mtxQueueProtect[queue] = m
+		}
+	*/
 
 	log.Info("NewQueueBalance:", " leaseID=", pthis.leaseID, " queue_ids=", queue_ids)
 
@@ -134,7 +150,7 @@ func (pthis *QueueBalance) consumer_require_queue_count_get() (int, error) {
 	}
 
 	if len(resp.Kvs) == 0 {
-		return 0, errors.New("no value")
+		return 0, errors.New("consumer_require_queue_count_get: no value")
 	}
 
 	return strconv.Atoi(string(resp.Kvs[0].Value))
@@ -169,6 +185,7 @@ func (pthis *QueueBalance) executor_run() error {
 	log.Info("executor_run:")
 
 	for {
+		// 等待dispathcer运行直至 // TODO 可以优化
 		resp, err := pthis.cli.Get(context.TODO(), pthis.key_dispatcher)
 		log.Info("executor_run:", " resp=", resp, " err=", err)
 		if err == nil {
@@ -188,42 +205,33 @@ func (pthis *QueueBalance) executor_run() error {
 
 	key := pthis.prefix_consumer_require_queue_count + pthis.local_consumer_id
 
-	ch_consumer := pthis.cli.Watch(context.TODO(), key)
+	ch_consumer_require_queue_count := pthis.cli.Watch(context.TODO(), key)
+
 	for {
 		select {
-		case wresp := <-ch_consumer:
-			for _, ev := range wresp.Events {
-				log.Infof("executor_run: %s %q : %q\n", ev.Type, ev.Kv.Key, ev.Kv.Value)
+		case <-ch_consumer_require_queue_count:
+			pthis.executor_check_rebalance()
 
-				require_queue_count, err := strconv.Atoi(string(ev.Kv.Value))
-				if err != nil {
-					fmt.Errorf("executor_run: %v", err)
-					continue
-				}
-
-				pthis.executor_check_rebalance(require_queue_count)
-			}
-
-		case <-time.Tick(time.Second):
+		case <-time.Tick(time.Second): // 为了测试方面，向etcd写入consmer状态信息
 			pthis.consumer_subscribed_update()
 
-		case <-time.Tick(time.Second * 2): //TODO: hard code
-			require_queue_count, err := pthis.consumer_require_queue_count_get()
-			if err != nil {
-				fmt.Errorf("executor_run: %v", err)
-				continue
-			}
-
-			if len(pthis.qm.queue_list) == require_queue_count {
-				pthis.executor_check_rebalance(require_queue_count)
-			}
+		case <-time.Tick(time.Second * 2): //TODO: hard code 定期检查
+			pthis.executor_check_rebalance()
 		}
 	}
 
 	return nil
 }
 
-func (pthis *QueueBalance) executor_check_rebalance(require_queue_count int) {
+func (pthis *QueueBalance) executor_check_rebalance() error {
+	log.Info("executor_check_rebalance:")
+
+	require_queue_count, err := pthis.consumer_require_queue_count_get()
+	if err != nil {
+		fmt.Errorf("executor_check_rebalance: pthis.consumer_require_queue_count_get %v", err)
+		return err
+	}
+
 	sub_ls := pthis.qm.GetSubscribed()
 	delta := require_queue_count - len(sub_ls)
 
@@ -242,6 +250,7 @@ func (pthis *QueueBalance) executor_check_rebalance(require_queue_count int) {
 		}
 	}
 
+	return nil
 }
 
 func (pthis *QueueBalance) queue_load() ([]*amqp.Queue, error) {
@@ -276,7 +285,9 @@ func (pthis *QueueBalance) executor_subscribe() error {
 	}
 
 	err = pthis.qm.Subscribe(queue)
-	if err == nil {
+	if err != nil {
+		log.Error("executor_subscribe:", " queue=", queue, " err=", err)
+	} else {
 		pthis.queue_status_changed_put(queue, pthis.local_consumer_id+".subscribed")
 	}
 
@@ -288,12 +299,14 @@ func (pthis *QueueBalance) executor_unsubscribe() error {
 	log.Info("executor_unsubscribe:", " sub_ls=", sub_ls)
 
 	if len(sub_ls) == 0 {
-		return errors.New("no queue for unsubscribe")
+		return errors.New("executor_unsubscribe: no queue for unsubscribe")
 	}
 
 	queue := sub_ls[0]
 	err := pthis.qm.Unsubscribe(queue)
-	if err == nil {
+	if err != nil {
+		log.Error("executor_subscribe:", " queue=", queue, " err=", err)
+	} else {
 		pthis.queue_status_changed_put(queue, pthis.local_consumer_id+".unsubscribed")
 	}
 
@@ -306,7 +319,8 @@ func (pthis *QueueBalance) dispatcher_run() {
 	pthis.mtxDispatcher.Lock(context.TODO())
 	defer pthis.mtxDispatcher.Unlock(context.TODO())
 
-	_, err := pthis.cli.Put(context.TODO(), pthis.key_dispatcher, pthis.local_consumer_id, clientv3.WithLease(pthis.leaseID))
+	_, err := pthis.cli.Put(context.TODO(), pthis.key_dispatcher, pthis.local_consumer_id,
+		clientv3.WithLease(pthis.leaseID))
 	if err != nil {
 		log.Error("dispatcher_run:", err)
 		return
@@ -318,53 +332,37 @@ func (pthis *QueueBalance) dispatcher_run() {
 	pthis.trigger_dispatch()
 
 	ch_queue := pthis.cli.Watch(context.TODO(), pthis.prefix_queue, clientv3.WithPrefix())
-	ch_consumer_require_queue_count := pthis.cli.Watch(context.TODO(), pthis.prefix_consumer_require_queue_count, clientv3.WithPrefix())
-	ch_queue_status_changed := pthis.cli.Watch(context.TODO(), pthis.prefix_queue_status_changed, clientv3.WithPrefix())
+
+	ch_consumer_require_queue_count := pthis.cli.Watch(context.TODO(),
+		pthis.prefix_consumer_require_queue_count, clientv3.WithPrefix())
+
+	ch_queue_status_changed := pthis.cli.Watch(context.TODO(),
+		pthis.prefix_queue_status_changed, clientv3.WithPrefix())
+
 	for {
 		select {
 		case wresp := <-ch_queue:
-			for _, ev := range wresp.Events {
-				log.Infof("dispatcher_run: Watch: %s %q : %q\n", ev.Type, ev.Kv.Key, ev.Kv.Value)
-				if ev.Type == mvccpb.PUT {
-					if ev.Kv.Version == 1 {
-						pthis.trigger_dispatch()
-					} else {
-						q := amqp.Queue{}
-						err := json.Unmarshal(ev.Kv.Value, &q)
-						if err != nil {
-							continue
-						}
+			pthis.dispatch_check_trigger(wresp.Events)
 
-						if q.Consumers != 1 {
-							pthis.trigger_dispatch()
-						}
-					}
-				} else if ev.Type == mvccpb.DELETE {
-					pthis.trigger_dispatch()
-				}
-			}
 		case wresp := <-ch_consumer_require_queue_count:
-			for _, ev := range wresp.Events {
-				log.Infof("dispatcher_run: Watch: %s %q : %q\n", ev.Type, ev.Kv.Key, ev.Kv.Value)
-				if (ev.Type == mvccpb.PUT && ev.Kv.Version == 1) || ev.Type == mvccpb.DELETE {
-					pthis.trigger_dispatch()
-				}
-			}
-		case <-time.Tick(time.Second * 2):
+			pthis.dispatch_check_trigger(wresp.Events)
+
+		case <-time.Tick(time.Second * 2): //TODO // 定时同步mq中的queueStatus
 			pthis.queue_update_all()
+
 		case wresp := <-ch_queue_status_changed:
 			for _, ev := range wresp.Events {
-				log.Infof("dispatcher_run: Watch: %s %q : %q\n", ev.Type, ev.Kv.Key, ev.Kv.Value)
+				log.Infof("dispatcher_run: ch_queue_status_changed Watch: %s %q : %q\n", ev.Type, ev.Kv.Key, ev.Kv.Value)
 				key := string(ev.Kv.Key)
 				ss := strings.Split(key, "/")
 				if len(ss) < 3 || ss[3] == "" {
-					log.Error("dispatcher_run: queue_update: failed. key format error")
+					log.Error("dispatcher_run: queue_update failed. key format error")
 					continue
 				}
 				queue := ss[3]
 				err := pthis.queue_update(queue)
 				if err != nil {
-					log.Error("dispatcher_run: queue_update: failed. err=", err)
+					log.Error("dispatcher_run: queue_update failed. err=", err)
 					continue
 				}
 			}
@@ -372,8 +370,47 @@ func (pthis *QueueBalance) dispatcher_run() {
 	}
 }
 
+func (pthis *QueueBalance) dispatch_check_trigger(evs []*clientv3.Event) {
+	trigger := false
+	for _, ev := range evs {
+		log.Infof("dispatch_check_trigger: %s key=%q, value=%q\n", ev.Type, ev.Kv.Key, ev.Kv.Value)
+
+		if strings.Contains(string(ev.Kv.Key), pthis.prefix_queue) {
+			if ev.Type == mvccpb.PUT {
+				if ev.Kv.Version == 1 {
+					trigger = true
+					break
+				} else {
+					q := amqp.Queue{}
+					err := json.Unmarshal(ev.Kv.Value, &q)
+					if err != nil {
+						continue
+					}
+
+					if q.Consumers != 1 {
+						trigger = true
+						break
+					}
+				}
+			} else if ev.Type == mvccpb.DELETE {
+				trigger = true
+				break
+			}
+		} else if strings.Contains(string(ev.Kv.Key), pthis.prefix_consumer_require_queue_count) {
+			if (ev.Type == mvccpb.PUT && ev.Kv.Version == 1) || ev.Type == mvccpb.DELETE {
+				trigger = true
+				break
+			}
+		}
+	}
+
+	if trigger {
+		pthis.trigger_dispatch()
+	}
+}
+
 func (pthis *QueueBalance) get_kvs(prefix string) ([]*mvccpb.KeyValue, error) {
-	log.Info("get_kvs:", " prefix=", prefix)
+	log.V(10).Info("get_kvs:", " prefix=", prefix)
 
 	resp, err := pthis.cli.Get(context.TODO(), prefix, clientv3.WithPrefix(),
 		clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend))
@@ -406,7 +443,7 @@ func (pthis *QueueBalance) trigger_dispatch() error {
 	}
 
 	if len(consumer_list) == 0 || len(queue_list) == 0 {
-		return errors.New("error: emptye consumer list")
+		return errors.New("trigger_dispatch: emptye consumer list")
 	}
 
 	avg := len(queue_list) / len(consumer_list)
@@ -419,7 +456,8 @@ func (pthis *QueueBalance) trigger_dispatch() error {
 		mod = 0
 	}
 
-	log.Info("trigger_dispatch:", " queue_list=", len(queue_list), " consumer_list=", len(consumer_list), " avg=", avg)
+	log.Info("trigger_dispatch:", " queue_list=", len(queue_list),
+		" consumer_list=", len(consumer_list), " avg=", avg)
 
 	for _, kv := range consumer_list {
 		require_queue_count := avg
@@ -455,13 +493,14 @@ func (pthis *QueueBalance) queue_put(queue string, qs *amqp.Queue) error {
 		return err
 	}
 
-	log.Info("queue_put:", " key=", key, " value=", value, " resp=", resp)
+	log.V(10).Info("queue_put:", " key=", key, " value=", value, " resp=", resp)
 	return nil
 }
 
+/*
 func (pthis *QueueBalance) queue_protected_get(queue string) (string, error) {
 	key := pthis.prefix_queue_protected + queue
-	log.Info("queue_protected_get:", " key=", key)
+	log.V(10).Info("queue_protected_get:", " key=", key)
 
 	resp, err := pthis.cli.Get(context.TODO(), key)
 	if err != nil {
@@ -469,27 +508,62 @@ func (pthis *QueueBalance) queue_protected_get(queue string) (string, error) {
 	}
 
 	if len(resp.Kvs) == 0 {
-		return "", errors.New("no key=" + key)
+		return "", errors.New("queue_protected_get: no key=" + key)
 	}
 
 	return string(resp.Kvs[0].Value), nil
 }
+*/
 
-func (pthis *QueueBalance) queue_protected_put(queue string, value string) error {
+///*
+func (pthis *QueueBalance) queue_protected_put_nx(queue string, value string) error {
+	//pthis.mtxProtectedLocal.Lock()
+	//defer pthis.mtxProtectedLocal.Unlock()
+
+	pthis.mtxProtected.Lock(context.TODO())
+	defer pthis.mtxProtected.Unlock(context.TODO())
+
 	key := pthis.prefix_queue_protected + queue
-	log.Info("queue_protected_put:", " key=", key, " value=", value)
 
-	_, err := pthis.cli.Put(context.TODO(), key, value, clientv3.WithLease(pthis.leaseID))
+	log.V(10).Info("queue_protected_put_nx:", " key=", key, " value=", value)
+
+	//*//
+	v, err := pthis.cli.Get(context.TODO(), key)
+	if err == nil {
+		if len(v.Kvs) > 0 {
+			return errors.New("queue_protected_put_nx: alrady has key=" + key + " value=" + string(v.Kvs[0].Value))
+		}
+	}
+
+	_, err = pthis.cli.Put(context.TODO(), key, value, clientv3.WithLease(pthis.leaseID))
 	if err != nil {
 		return err
 	}
 
+	for {
+		v, err := pthis.cli.Get(context.TODO(), key)
+		if err == nil {
+			if len(v.Kvs) > 0 {
+				break
+			}
+		}
+		time.Sleep(time.Millisecond * 100)
+	}
+	///*/
+
+	/*
+		cmp := v3.Compare(v3.CreateRevision(m.myKey), "=", 0)
+		put := v3.OpPut(key, value, v3.WithLease(s.Lease()))
+		pthis.cli.Txn(context.TODO()).If(cmp).Then(put).Else().Commit()
+	*/
+
+	log.V(10).Info("queue_protected_put_nx: finish", " key=", key, " value=", value)
 	return nil
 }
 
 func (pthis *QueueBalance) queue_protected_del(queue string) error {
 	key := pthis.prefix_queue_protected + queue
-	log.Info("queue_protected_del:", " key=", key)
+	log.V(10).Info("queue_protected_del:", " key=", key)
 
 	_, err := pthis.cli.Delete(context.TODO(), key)
 	if err != nil {
@@ -498,6 +572,26 @@ func (pthis *QueueBalance) queue_protected_del(queue string) error {
 
 	return nil
 }
+
+//*/
+
+/*
+func (pthis *QueueBalance) queue_protected_put_nx(queue string, value string) error {
+	m := pthis.mtxQueueProtect[queue]
+	if m != nil {
+		m.Lock(context.TODO())
+	}
+	return nil
+}
+
+func (pthis *QueueBalance) queue_protected_del(queue string) error {
+	m := pthis.mtxQueueProtect[queue]
+	if m != nil {
+		m.Unlock(context.TODO())
+	}
+	return nil
+}
+*/
 
 func (pthis *QueueBalance) queue_request() (string, error) {
 	log.Info("queue_request:")
@@ -508,20 +602,21 @@ func (pthis *QueueBalance) queue_request() (string, error) {
 	}
 
 	for _, qs := range mp {
-		log.Info("queue_request:", " qs=", struct_to_string(qs))
+		log.V(10).Info("queue_request:", " qs=", struct_to_string(qs))
 
 		if qs.Consumers == 0 {
 			queue := qs.Name
-			_, err := pthis.queue_protected_get(queue)
-			log.Info("queue_request: err=", err)
+
+			err = pthis.queue_protected_put_nx(queue, pthis.local_consumer_id)
 			if err != nil {
-				pthis.queue_protected_put(queue, pthis.local_consumer_id)
+				log.V(10).Info("queue_request: queue_protected_put_nx err=", err)
+			} else {
 				return queue, nil
 			}
 		}
 	}
 
-	return "", errors.New("no queue rest")
+	return "", errors.New("queue_request: no queue rest")
 }
 
 func (pthis *QueueBalance) queue_status_changed_put(queue string, value string) error {
@@ -568,3 +663,21 @@ func (pthis *QueueBalance) queue_update_all() {
 		}
 	}
 }
+
+/*
+func (pthis *QueueBalance) queue_load_from_mq() ([]*amqp.Queue, error) {
+	log.Info("queue_load_from_mq:")
+
+	qss := []*amqp.Queue{}
+	for _, queue := range pthis.queue_ids {
+		qs, err := pthis.qm.Inspect(queue)
+		if err != nil {
+			return err
+		}
+
+		qss = append(qss, &qs)
+	}
+
+	return qss, nil
+}
+*/

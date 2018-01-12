@@ -7,9 +7,8 @@ import (
 )
 
 type QueueMgr struct {
-	conn *amqp.Connection
-	ch   *amqp.Channel
-	//	subscrbed_queue_list map[string]<-chan amqp.Delivery
+	conn       *amqp.Connection
+	ch         *amqp.Channel
 	pOnMsg     QueueOnMsg
 	queue_list []string
 }
@@ -20,7 +19,6 @@ type QueueOnMsg interface {
 
 func NewMqMgr(url string, pOnMsg QueueOnMsg) (*QueueMgr, error) {
 	mgr := QueueMgr{}
-	//	mgr.subscrbed_queue_list = make(map[string]<-chan amqp.Delivery)
 
 	var err error = nil
 	mgr.conn, err = amqp.Dial(url)
