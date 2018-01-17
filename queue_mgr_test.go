@@ -5,6 +5,7 @@ import (
 	"github.com/streadway/amqp"
 	"log"
 	"testing"
+	"time"
 )
 
 type MyQueueOnMsg struct {
@@ -52,17 +53,63 @@ func Test_QumemeMgr(t *testing.T) {
 
 func Test_publish_msg(t *testing.T) {
 
-	uri := "amqp://guest:guest@59.110.154.248:5672/"
-	exchangeName := "test.direct"     // flag.String("exchange", "test-exchange", "Durable AMQP exchange name")
-	exchangeType := "direct"          // flag.String("exchange-type", "direct", "Exchange type - direct|fanout|topic|x-custom")
-	routingKey := "1"                 // flag.String("key", "test-key", "AMQP routing key")
-	body := "body" + "." + routingKey // flag.String("body", "foobar", "Body of message")
-	reliable := false                 // flag.Bool("reliable", true, "Wait for the publisher confirmation before exiting")
+	amqpURI := "amqp://guest:guest@59.110.154.248:5672/"
+	exchange := "test.direct" // flag.String("exchange", "test-exchange", "Durable AMQP exchange name")
+	exchangeType := "direct"  // flag.String("exchange-type", "direct", "Exchange type - direct|fanout|topic|x-custom")
 
-	if err := publish(uri, exchangeName, exchangeType, routingKey, body, reliable); err != nil {
-		log.Fatalf("%s", err)
+	log.Printf("dialing %q", amqpURI)
+	connection, err := amqp.Dial(amqpURI)
+	if err != nil {
+		t.Errorf("Dial: %s", err)
 	}
-	log.Printf("published %dB OK", len(body))
+	defer connection.Close()
+
+	log.Printf("got Connection, getting Channel")
+	channel, err := connection.Channel()
+	if err != nil {
+		t.Errorf("Channel: %s", err)
+	}
+
+	log.Printf("got Channel, declaring %q Exchange (%q)", exchangeType, exchange)
+	if err := channel.ExchangeDeclare(
+		exchange,     // name
+		exchangeType, // type
+		true,         // durable
+		false,        // auto-deleted
+		false,        // internal
+		false,        // noWait
+		nil,          // arguments
+	); err != nil {
+		t.Errorf("Exchange Declare: %s", err)
+	}
+
+	for i := 0; i < 100000; i++ {
+		routingKey := fmt.Sprintf("%d", i%8+1)
+		body := "body" + "." + routingKey
+
+		log.Printf("declared Exchange, publishing %dB body (%q)", len(body), body)
+		if err = channel.Publish(
+			exchange,   // publish to an exchange
+			routingKey, // routing to 0 or more queues
+			false,      // mandatory
+			false,      // immediate
+			amqp.Publishing{
+				Headers:         amqp.Table{},
+				ContentType:     "text/plain",
+				ContentEncoding: "",
+				Body:            []byte(body),
+				DeliveryMode:    amqp.Transient, // 1=non-persistent, 2=persistent
+				Priority:        0,              // 0-9
+				// a bunch of application/implementation-specific fields
+			},
+		); err != nil {
+			t.Errorf("Exchange Publish: %s", err)
+		}
+
+		log.Printf("published %dB OK", len(body))
+
+		time.Sleep(time.Millisecond * 200)
+	}
 }
 
 func publish(amqpURI, exchange, exchangeType, routingKey, body string, reliable bool) error {
