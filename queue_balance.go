@@ -10,14 +10,14 @@ import (
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/coreos/etcd/mvcc/mvccpb"
 	log "github.com/golang/glog"
+	"github.com/gorilla/mux"
 	"github.com/streadway/amqp"
 	"io/ioutil"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
-	//"sync"
-	"github.com/gorilla/mux"
+	"sync"
 	"time"
 )
 
@@ -47,6 +47,8 @@ type QueueBalance struct {
 	api_request string
 
 	leaseID clientv3.LeaseID
+
+	mtx_queue_request *sync.Mutex
 
 	qm *QueueMgr
 }
@@ -97,6 +99,8 @@ func NewQueueBalance(endpoints []string, amqp string, pOnMsg QueueOnMsg, queue_i
 	pthis.api_update = "/api/v1/queue/update"
 
 	log.Info("NewQueueBalance:", " leaseID=", pthis.leaseID, " queue_ids=", queue_ids)
+
+	pthis.mtx_queue_request = &sync.Mutex{}
 
 	return &pthis, nil
 }
@@ -640,8 +644,31 @@ func (pthis *QueueBalance) keeper_check_trigger(evs []*clientv3.Event) {
 				break
 			}
 		} else if strings.Contains(string(ev.Kv.Key), pthis.prefix_consumer_require_queue_count) {
-			if (ev.Type == mvccpb.PUT && ev.Kv.Version == 1) || ev.Type == mvccpb.DELETE {
+			if ev.Type == mvccpb.PUT && ev.Kv.Version == 1 {
 				trigger = true
+				break
+			} else if ev.Type == mvccpb.DELETE {
+				trigger = true
+
+				// TODO: 结构需要优化
+				key := string(ev.Kv.Key)
+				ss := strings.Split(key, "/")
+				if len(ss) < 3 || len(ss[3]) == 0 {
+					//TODO: need logs
+					break
+				}
+				consumer := ss[3]
+
+				queues, err := pthis.keeper_queue_subscribed_find(consumer)
+				if err != nil {
+					//TODO: need logs
+					break
+				}
+
+				for _, queue := range queues {
+					pthis.keeper_queue_subscribed_del(queue)
+				}
+
 				break
 			}
 		}
@@ -736,6 +763,9 @@ func (pthis *QueueBalance) keeper_queue_load() ([]*amqp.Queue, error) {
 func (pthis *QueueBalance) keeper_queue_subscribed_request(consumer string) (string, error) {
 	log.Info("keeper_queue_subscribed_request:", " consumer=", consumer)
 
+	pthis.mtx_queue_request.Lock()
+	defer pthis.mtx_queue_request.Unlock()
+
 	mp, err := pthis.keeper_queue_load()
 	if err != nil {
 		return "", err
@@ -809,4 +839,32 @@ func (pthis *QueueBalance) keeper_queue_subscribed_del(queue string) error {
 	}
 
 	return nil
+}
+
+func (pthis *QueueBalance) keeper_queue_subscribed_find(consumer string) ([]string, error) {
+	log.Info("keeper_queue_subscribed_find:", " consumer=", consumer)
+
+	kvs, err := pthis.get_kvs(pthis.prefix_queue_subscribed_by)
+	if err != nil {
+		return nil, err
+	}
+
+	queues := []string{}
+	for _, kv := range kvs {
+		value := string(kv.Value)
+		if value == consumer {
+			key := string(kv.Key)
+
+			ss := strings.Split(key, "/")
+			if len(ss) < 3 || len(ss[3]) == 0 {
+				//TODO: need logs
+				continue
+			}
+			queue := ss[3]
+
+			queues = append(queues, queue)
+		}
+	}
+
+	return queues, nil
 }
