@@ -19,7 +19,7 @@ run3: build
 
 
 test:
-	go test -v -run Test_QumemeMgr test
+	go test -v -run Test_QumemeMgr TestHelloWorld qb
 
 watch:
 	watch -n 1 -d './cli.sh get --prefix /qb'
