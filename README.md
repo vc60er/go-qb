@@ -74,6 +74,9 @@ make run2
 向mq发布消息
 make pub
 
+观察运行状态
+make watch
+
 ```
 
 
