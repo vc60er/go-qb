@@ -57,6 +57,22 @@ etcd:
 ### 测试
 ```shell
 
+cd example
+
+运行etcd
+goreman start
+
+运行consuer1
+make run1
+
+运行consuer2
+make run2
+
+运行consuer3
+make run2
+
+向mq发布消息
+make pub
 
 ```
 

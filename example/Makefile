@@ -5,20 +5,20 @@ build:
 #	go install ${target}
 
 run: build
-	${target} -alsologtostderr -v 10 2>&1 | tee a.log
+	${target} -alsologtostderr  2>&1 | tee a.log
 
 
 run1: build
-	${target} -alsologtostderr -v 10 2>&1 | tee 1.log
+	${target} -alsologtostderr  2>&1 | tee 1.log
 
 run2: build
-	${target} -alsologtostderr -v 10 2>&1 | tee 2.log
+	${target} -alsologtostderr  2>&1 | tee 2.log
 
 run3: build
-	${target} -alsologtostderr -v 10 2>&1 | tee 3.log
+	${target} -alsologtostderr  2>&1 | tee 3.log
 
 
-test:
+pub:
 	go test -v -run Test_publish_msg  github.com/vc60er/go-qb
 
 watch:
