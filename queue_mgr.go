@@ -98,7 +98,7 @@ func (pthis *QueueMgr) GetSubscribed() []string {
 	return pthis.queue_list
 }
 
-func struct_to_string(v interface{}) string {
+func Struct_to_string(v interface{}) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }

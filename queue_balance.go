@@ -141,7 +141,7 @@ func (pthis *QueueBalance) keeper_queue_status_update(queue string) error {
 		return err
 	}
 
-	log.Info("keeper_queue_status_update:", " queue=", queue, " qs=", struct_to_string(qs))
+	log.Info("keeper_queue_status_update:", " queue=", queue, " qs=", Struct_to_string(qs))
 
 	err = pthis.keeper_queue_put(qs.Name, &qs)
 	if err != nil {
@@ -772,7 +772,7 @@ func (pthis *QueueBalance) keeper_queue_subscribed_request(consumer string) (str
 	}
 
 	for _, qs := range mp {
-		log.V(10).Info("keeper_queue_subscribed_request:", " qs=", struct_to_string(qs))
+		log.V(10).Info("keeper_queue_subscribed_request:", " qs=", Struct_to_string(qs))
 
 		if qs.Consumers == 0 {
 			queue := qs.Name
