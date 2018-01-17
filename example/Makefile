@@ -19,7 +19,7 @@ run3: build
 
 
 test:
-	go test -v -run Test_QumemeMgr TestHelloWorld qb
+	go test -v -run Test_publish_msg  github.com/vc60er/go-qb
 
 watch:
 	watch -n 1 -d './cli.sh get --prefix /qb'
