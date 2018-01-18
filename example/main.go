@@ -26,7 +26,9 @@ func main() {
 	port := 8800
 
 	qb, err := qb.NewQueueBalance(endpoints, amqp, msg, queue_ids, ip, port)
-	failOnError(err, "NewQueueBalance")
+	if err != nil {
+		log.Fatalf("%s: %s", msg, err)
+	}
 
 	defer qb.Close()
 
@@ -36,10 +38,4 @@ func main() {
 	signal.Notify(c, os.Interrupt)
 	s := <-c
 	log.Info(s)
-}
-
-func failOnError(err error, msg string) {
-	if err != nil {
-		log.Fatalf("%s: %s", msg, err)
-	}
 }
