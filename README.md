@@ -4,17 +4,8 @@ Load balancer for rabbitmq queue subscribing
 
 
 ## Feature
+- Rabbitmq queue subscription load balancing based on etcd
 
-- Load multiple data sources(`[]byte`, file and `io.ReadCloser`) with overwrites.
-- Read with recursion values.
-- Read with parent-child sections.
-- Read with auto-increment key names.
-- Read with multiple-line values.
-- Read with tons of helper methods.
-- Read and convert values to Go types.
-- Read and **WRITE** comments of sections and keys.
-- Manipulate sections, keys and comments with ease.
-- Keep sections and keys in order as you parse and save.
 
 
 
