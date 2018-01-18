@@ -53,13 +53,9 @@ type QueueBalance struct {
 	qm *QueueMgr
 }
 
-type consumer_status struct {
-	Subscribe_queue_list string
-	Consumer_id          string
-	Ip                   string
-}
+func NewQueueBalance(endpoints []string, amqp string, pOnMsg QueueOnMsg, queue_ids []string, ip string, port int) (*QueueBalance, error) {
+	//TODO 参数检查
 
-func NewQueueBalance(endpoints []string, amqp string, pOnMsg QueueOnMsg, queue_ids []string) (*QueueBalance, error) {
 	pthis := QueueBalance{}
 
 	var err error = nil
@@ -78,29 +74,33 @@ func NewQueueBalance(endpoints []string, amqp string, pOnMsg QueueOnMsg, queue_i
 		return nil, err
 	}
 
-	pthis.mtxKeeper = concurrency.NewMutex(pthis.ses, "/qb/lock/keeper")
+	pthis.mtx_queue_request = &sync.Mutex{}
+
+	pthis.mtxKeeper = concurrency.NewMutex(pthis.ses, "/qb/lock/keeper") //TODO: 可以更优化
 
 	pthis.prefix_consumer_status = "/qb/consumer_status/"
 	pthis.prefix_consumer_require_queue_count = "/qb/consumer_require_queue_count/"
 	pthis.prefix_queue_status = "/qb/queue_status/"
 	pthis.prefix_queue_subscribed_by = "/qb/queue_subscribed_by/"
 	pthis.key_keeper_api = "/qb/keeper_api"
-	pthis.port_keeper = 8800
-
-	pthis.queue_ids = queue_ids
-
-	pthis.local_consumer_id = fmt.Sprintf("consumer.%d", time.Now().Unix())
-	pthis.local_ip = "127.0.0.1" //TODO
-
-	pthis.leaseID = pthis.ses.Lease()
 
 	pthis.api_request = "/api/v1/queue/request"
 	pthis.api_return = "/api/v1/queue/return"
 	pthis.api_update = "/api/v1/queue/update"
 
-	log.Info("NewQueueBalance:", " leaseID=", pthis.leaseID, " queue_ids=", queue_ids)
+	pthis.local_ip = ip      // "127.0.0.1"
+	pthis.port_keeper = port // 8800
+	pthis.queue_ids = queue_ids
 
-	pthis.mtx_queue_request = &sync.Mutex{}
+	pthis.leaseID = pthis.ses.Lease()
+
+	pthis.local_consumer_id = fmt.Sprintf("consumer_%s_%d", pthis.local_ip, pthis.leaseID)
+
+	log.Info("NewQueueBalance:",
+		" leaseID=", pthis.leaseID,
+		" queue_ids=", pthis.queue_ids,
+		" local_ip=", pthis.local_ip,
+		" port_keeper=", pthis.port_keeper)
 
 	return &pthis, nil
 }
@@ -134,14 +134,14 @@ func (pthis *QueueBalance) keeper_queue_put(queue string, qs *amqp.Queue) error 
 }
 
 func (pthis *QueueBalance) keeper_queue_status_update(queue string) error {
-	log.Info("keeper_queue_status_update:", " queue=", queue)
+	log.V(10).Info("keeper_queue_status_update:", " queue=", queue)
 
 	qs, err := pthis.qm.Inspect(queue)
 	if err != nil {
 		return err
 	}
 
-	log.Info("keeper_queue_status_update:", " queue=", queue, " qs=", Struct_to_string(qs))
+	log.V(10).Info("keeper_queue_status_update:", " queue=", queue, " qs=", Struct_to_string(qs))
 
 	err = pthis.keeper_queue_put(qs.Name, &qs)
 	if err != nil {
@@ -152,7 +152,7 @@ func (pthis *QueueBalance) keeper_queue_status_update(queue string) error {
 }
 
 func (pthis *QueueBalance) keeper_queue_status_update_all() {
-	log.Info("keeper_queue_status_update_all:")
+	log.V(10).Info("keeper_queue_status_update_all:")
 
 	for _, queue := range pthis.queue_ids {
 		err := pthis.keeper_queue_status_update(queue)
@@ -272,8 +272,8 @@ func (pthis *QueueBalance) consumer_run() error {
 		case <-time.Tick(time.Second): // 为了测试方面，向etcd写入consmer状态信息
 			pthis.consumer_status_update()
 
-			//		case <-time.Tick(time.Second * 2): //TODO: hard code 定期检查
-			//			pthis.consumer_check_rebalance()
+		case <-time.Tick(time.Second * 2): //TODO: hard code 定期检查
+			pthis.consumer_check_rebalance()
 		}
 	}
 
@@ -533,7 +533,7 @@ func write_response(w http.ResponseWriter, errno int, errmsg string, data map[st
 // TODO: 缺少错误处理
 func (pthis *QueueBalance) keeper_run_api() {
 	url_base := fmt.Sprintf("http://%s:%d", pthis.local_ip, pthis.port_keeper)
-	addr := fmt.Sprintf(":%d", pthis.port_keeper)
+	addr := fmt.Sprintf("%s:%d", pthis.local_ip, pthis.port_keeper)
 
 	log.Info("keeper_run_api:", " url_base=", url_base, " addr=", addr)
 
@@ -620,7 +620,7 @@ func (pthis *QueueBalance) handle_queue_update(w http.ResponseWriter, req *http.
 func (pthis *QueueBalance) keeper_check_trigger(evs []*clientv3.Event) {
 	trigger := false
 	for _, ev := range evs {
-		log.Infof("keeper_check_trigger: %s key=%q, value=%q\n", ev.Type, ev.Kv.Key, ev.Kv.Value)
+		log.V(10).Infof("keeper_check_trigger: %s key=%q, value=%q\n", ev.Type, ev.Kv.Key, ev.Kv.Value)
 
 		if strings.Contains(string(ev.Kv.Key), pthis.prefix_queue_status) {
 			if ev.Type == mvccpb.PUT {

@@ -40,7 +40,7 @@ etcd:
 ```
 
 
-### 架构
+### 架构图
 ```shell
 	
 ```
@@ -79,6 +79,46 @@ make watch
 
 ```
 
+```bash
+Every 1.0s: ./cli.sh get --prefix /qb                                                                                                                     chengningMBP.lan: Thu Jan 18 20:48:05 2018
+
+/qb/consumer_require_queue_count/consumer_127.0.0.1_3632541266441280445
+3
+/qb/consumer_require_queue_count/consumer_127.0.0.1_3632541266441280505
+3
+/qb/consumer_require_queue_count/consumer_127.0.0.1_4703553552825333576
+2
+/qb/consumer_status/consumer_127.0.0.1_3632541266441280445
+queue.7,queue.8,queue.4
+/qb/consumer_status/consumer_127.0.0.1_3632541266441280505
+queue.2,queue.5,queue.6
+/qb/consumer_status/consumer_127.0.0.1_4703553552825333576
+queue.1,queue.3
+/qb/keeper_api
+http://127.0.0.1:8800
+/qb/lock/keeper/326961092a2e1bbd
+
+/qb/lock/keeper/326961092a2e1bf9
+
+/qb/lock/keeper/414661092a2e3748
+
+/qb/queue_status/queue.1
+{"Name":"queue.1","Messages":0,"Consumers":1}
+/qb/queue_status/queue.2
+{"Name":"queue.2","Messages":0,"Consumers":1}
+/qb/queue_status/queue.3
+{"Name":"queue.3","Messages":0,"Consumers":1}
+/qb/queue_status/queue.4
+{"Name":"queue.4","Messages":0,"Consumers":1}
+/qb/queue_status/queue.5
+{"Name":"queue.5","Messages":0,"Consumers":1}
+/qb/queue_status/queue.6
+{"Name":"queue.6","Messages":0,"Consumers":1}
+/qb/queue_status/queue.7
+{"Name":"queue.7","Messages":0,"Consumers":1}
+/qb/queue_status/queue.8
+{"Name":"queue.8","Messages":0,"Consumers":1}
+```
 
 
 
