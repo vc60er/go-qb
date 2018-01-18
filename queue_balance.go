@@ -646,30 +646,11 @@ func (pthis *QueueBalance) keeper_check_trigger(evs []*clientv3.Event) {
 		} else if strings.Contains(string(ev.Kv.Key), pthis.prefix_consumer_require_queue_count) {
 			if ev.Type == mvccpb.PUT && ev.Kv.Version == 1 {
 				trigger = true
-				break
 			} else if ev.Type == mvccpb.DELETE {
 				trigger = true
 
-				// TODO: 结构需要优化
 				key := string(ev.Kv.Key)
-				ss := strings.Split(key, "/")
-				if len(ss) < 3 || len(ss[3]) == 0 {
-					//TODO: need logs
-					break
-				}
-				consumer := ss[3]
-
-				queues, err := pthis.keeper_queue_subscribed_find(consumer)
-				if err != nil {
-					//TODO: need logs
-					break
-				}
-
-				for _, queue := range queues {
-					pthis.keeper_queue_subscribed_del(queue)
-				}
-
-				break
+				pthis.keeper_queue_subscribed_del_by_consumer(key)
 			}
 		}
 	}
@@ -855,16 +836,42 @@ func (pthis *QueueBalance) keeper_queue_subscribed_find(consumer string) ([]stri
 		if value == consumer {
 			key := string(kv.Key)
 
-			ss := strings.Split(key, "/")
-			if len(ss) < 3 || len(ss[3]) == 0 {
-				//TODO: need logs
+			queue, err := get_param_from_key(key, "/", 3)
+			if err != nil {
+				log.Error("keeper_queue_subscribed_find: get_param_from_key err=", err)
 				continue
 			}
-			queue := ss[3]
 
 			queues = append(queues, queue)
 		}
 	}
 
 	return queues, nil
+}
+
+func get_param_from_key(key string, sep string, n int) (string, error) {
+	ss := strings.Split(key, sep)
+
+	if n > len(ss)-1 {
+		return "", errors.New("no param in key=" + key)
+	}
+
+	return ss[n], nil
+}
+
+func (pthis *QueueBalance) keeper_queue_subscribed_del_by_consumer(consumer_key string) {
+
+	consumer, err := get_param_from_key(consumer_key, "/", 3)
+	if err != nil {
+		log.Error("keeper_queue_subscribed_del_by_consumer: get_param_from_key err=", err)
+	}
+
+	queues, err := pthis.keeper_queue_subscribed_find(consumer)
+	if err != nil {
+		log.Error("keeper_queue_subscribed_del_by_consumer: keeper_queue_subscribed_find err=", err)
+	}
+
+	for _, queue := range queues {
+		pthis.keeper_queue_subscribed_del(queue)
+	}
 }
